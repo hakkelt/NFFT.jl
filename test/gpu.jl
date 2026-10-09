@@ -6,7 +6,7 @@ arrayTypes = [JLArray]
 
 import FFTW # ESTIMATE
 using LinearAlgebra: norm
-using NFFT: plan_nfft, NDFTPlan
+using NFFT: plan_nfft, NDFTPlan, size_in, size_out
 import NFFT # LINEAR, FULL, TENSOR, POLYNOMIAL
 using NFFTTools: sdc
 using Test: @test, @testset, @test_throws
@@ -47,6 +47,29 @@ m = 5
           @test e < eps[l]
         end
       end
+    end
+
+    @testset "GPU_NFFT batched over transforms and frames" begin
+      N = (24, 20)
+      J, batch, frames = 300, 3, 2
+      k = rand(Float64, 2, J * frames) .- 0.5
+      p_d = plan_nfft(arrayType, k, N; m, σ, batch, frames)
+      @test size_in(p_d) == (N..., batch, frames)
+      @test size_out(p_d) == (J, batch, frames)
+
+      f = randn(ComplexF64, N..., batch, frames)
+      fHat = randn(ComplexF64, J, batch, frames)
+      g = Array(p_d * arrayType(f))
+      h = Array(adjoint(p_d) * arrayType(fHat))
+      for t in 1:frames
+        p = plan_nfft(Array, k[:, (t - 1) * J .+ (1:J)], N; m, σ, fftflags=FFTW.ESTIMATE)
+        for b in 1:batch
+          @test g[:, b, t] ≈ p * f[:, :, b, t] rtol = 1e-10
+          @test h[:, :, b, t] ≈ adjoint(p) * fHat[:, b, t] rtol = 1e-10
+        end
+      end
+      @test_throws ArgumentError plan_nfft(arrayType, k[:, 1:(end - 1)], N; frames)
+      @test_throws DimensionMismatch p_d * arrayType(f[:, :, 1:1, :])
     end
 
     @testset "GPU_NFFT Sampling Density" begin
